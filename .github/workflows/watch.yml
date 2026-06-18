@@ -1,0 +1,54 @@
+name: VM straffevakt
+
+# Cron er i UTC. VM-2026-kampene spilles i USA/Canada/Mexico, dvs. live ca.
+# 15:00-04:00 UTC. Vi sjekker hvert 5. minutt i det vinduet, kun i juni og juli.
+# (GitHub kan forsinke planlagte kjoeringer noen minutter ved hoey belastning.)
+on:
+  schedule:
+    - cron: '*/5 15-23,0-4 * 6,7 *'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Send et testvarsel til mobilen (sett til true)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vm-straffevakt
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hent koden
+        uses: actions/checkout@v4
+
+      - name: Sett opp Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Kjoer overvaaking
+        env:
+          PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
+          PUSHOVER_USER: ${{ secrets.PUSHOVER_USER }}
+        run: |
+          if [ "${{ github.event.inputs.test }}" = "true" ]; then
+            python3 monitor.py --test
+          else
+            python3 monitor.py
+          fi
+
+      - name: Lagre state (unngaa dobbeltvarsler)
+        run: |
+          if [[ -n "$(git status --porcelain state.json)" ]]; then
+            git config user.name "vm-straffevakt"
+            git config user.email "actions@users.noreply.github.com"
+            git add state.json
+            git commit -m "Oppdater state [skip ci]"
+            git push
+          fi
