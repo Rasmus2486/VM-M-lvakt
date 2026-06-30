@@ -1,11 +1,16 @@
 name: VM straffevakt
 
-# Cron er i UTC. VM-2026-kampene spilles i USA/Canada/Mexico, dvs. live ca.
-# 15:00-04:00 UTC. Vi sjekker hvert 5. minutt i det vinduet, kun i juni og juli.
-# (GitHub kan forsinke planlagte kjoeringer noen minutter ved hoey belastning.)
+# SELVGAANDE / ALLTID-PAA:
+# Jobben kjoerer sammenhengende i ~5 timer og sjekker live-kamper hvert minutt.
+# Cron fyrer ofte (selv om GitHub hopper over mange) — hver gang en kjoering
+# fyres mens en annen alt kjoerer, settes den i "pending" (concurrency). Naar den
+# loepende jobben er ferdig, starter den ventende UMIDDELBART. Dermed gaar det
+# rundt doegnet, uavhengig av at GitHubs timeplan er upaalitelig.
+#
+# Krever at repoet er PUBLIC (da er Actions gratis uten minuttgrense).
 on:
   schedule:
-    - cron: '*/5 15-23,0-4 * 6,7 *'
+    - cron: '*/5 * * 6,7 *'
   workflow_dispatch:
     inputs:
       test:
@@ -16,6 +21,7 @@ on:
 permissions:
   contents: write
 
+# Kun én jobb av gangen; nye kjoeringer venter i koe og tar over naar denne slutter.
 concurrency:
   group: vm-straffevakt
   cancel-in-progress: false
@@ -23,6 +29,7 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
       - name: Hent koden
         uses: actions/checkout@v4
@@ -36,19 +43,22 @@ jobs:
         env:
           PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
           PUSHOVER_USER: ${{ secrets.PUSHOVER_USER }}
+          MAX_RUNTIME_MIN: '315'
         run: |
           if [ "${{ github.event.inputs.test }}" = "true" ]; then
             python3 monitor.py --test
           else
-            python3 monitor.py
+            python3 monitor.py --forever
           fi
 
       - name: Lagre state (unngaa dobbeltvarsler)
+        if: always()
         run: |
           if [[ -n "$(git status --porcelain state.json)" ]]; then
             git config user.name "vm-straffevakt"
             git config user.email "actions@users.noreply.github.com"
             git add state.json
             git commit -m "Oppdater state [skip ci]"
-            git push
+            git pull --rebase --autostash || true
+            git push || true
           fi
